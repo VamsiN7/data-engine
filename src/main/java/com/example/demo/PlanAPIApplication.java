@@ -27,6 +27,8 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import com.example.demo.model.DataResponse;
 import com.example.demo.model.ErrorResponse;
+import com.example.demo.model.PlanDocument;
+import com.example.demo.service.ElasticsearchService;
 
 @SpringBootApplication
 public class PlanAPIApplication {
@@ -34,23 +36,6 @@ public class PlanAPIApplication {
 	public static void main(String[] args) {
 		SpringApplication.run(PlanAPIApplication.class, args);
 	}
-
-	// Configure Redis Connection Factory (using Lettuce)
-	// @Bean
-	// public LettuceConnectionFactory redisConnectionFactory() {
-	// 	RedisStandaloneConfiguration config = new RedisStandaloneConfiguration();
-	// 	config.setHostName("localhost"); 
-	// 	config.setPort(6379); 
-	// 	return new LettuceConnectionFactory(config);
-	// }
-
-	// // Configure RedisTemplate to use String keys and values
-	// @Bean
-	// public RedisTemplate<String, String> redisTemplate() {
-	// 	RedisTemplate<String, String> template = new RedisTemplate<>();
-	// 	template.setConnectionFactory(redisConnectionFactory());
-	// 	return template;
-	// }
 }
 
 @RestController
@@ -58,11 +43,13 @@ public class PlanAPIApplication {
 class PlanController {
 
 	private Schema planSchema;
+	private final RedisTemplate<String, String> redisTemplate;
+	private final ElasticsearchService elasticsearchService;
 
 	@Autowired
-	private RedisTemplate<String, String> redisTemplate;
-
-	public PlanController() {
+	public PlanController(RedisTemplate<String, String> redisTemplate, ElasticsearchService elasticsearchService) {
+		this.redisTemplate = redisTemplate;
+		this.elasticsearchService = elasticsearchService;
 		try (InputStream schemaStream = getClass().getResourceAsStream("/plan-schema.json")) {
 			if (schemaStream == null) {
 				throw new RuntimeException("Schema file not found");
@@ -101,6 +88,9 @@ class PlanController {
 			redisData.put("metadata", metadata);
 			redisData.put("etag", etag);
 			redisTemplate.opsForValue().set(objectId, redisData.toString());
+			
+			// Index in Elasticsearch
+			elasticsearchService.indexPlan(jsonObject);
 			
 			URI location = ServletUriComponentsBuilder.fromCurrentRequest()
 					.path("/{id}")
@@ -356,10 +346,40 @@ class PlanController {
 				return ResponseEntity.status(HttpStatus.NOT_FOUND)
 						.body(new ErrorResponse("Plan not found", "NOT_FOUND"));
 			}
+			
+			// Delete from Elasticsearch
+			elasticsearchService.deletePlan(id);
+			
 			return ResponseEntity.noContent().build();
 		} catch (Exception e) {
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
 					.body(new ErrorResponse("Failed to delete plan", "INTERNAL_ERROR"));
+		}
+	}
+
+	@GetMapping("/search")
+	public ResponseEntity<?> searchPlans(
+			@RequestParam(required = false) String org,
+			@RequestParam(required = false) String planType,
+			@RequestParam(required = false) String serviceId) {
+		try {
+			List<PlanDocument> results;
+			
+			if (org != null) {
+				results = elasticsearchService.searchByOrganization(org);
+			} else if (planType != null) {
+				results = elasticsearchService.searchByPlanType(planType);
+			} else if (serviceId != null) {
+				results = elasticsearchService.searchByServiceId(serviceId);
+			} else {
+				return ResponseEntity.badRequest()
+						.body(new ErrorResponse("At least one search parameter is required", "INVALID_SEARCH"));
+			}
+			
+			return ResponseEntity.ok(results);
+		} catch (Exception e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+					.body(new ErrorResponse("Search failed", "SEARCH_ERROR"));
 		}
 	}
 }
