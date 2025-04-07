@@ -29,6 +29,7 @@ import com.example.demo.model.DataResponse;
 import com.example.demo.model.ErrorResponse;
 import com.example.demo.model.PlanDocument;
 import com.example.demo.service.ElasticsearchService;
+import com.example.demo.service.RabbitMQProducerService;
 
 @SpringBootApplication
 public class PlanAPIApplication {
@@ -45,11 +46,16 @@ class PlanController {
 	private Schema planSchema;
 	private final RedisTemplate<String, String> redisTemplate;
 	private final ElasticsearchService elasticsearchService;
+	private final RabbitMQProducerService rabbitMQProducerService;
 
 	@Autowired
-	public PlanController(RedisTemplate<String, String> redisTemplate, ElasticsearchService elasticsearchService) {
+	public PlanController(
+			RedisTemplate<String, String> redisTemplate,
+			ElasticsearchService elasticsearchService,
+			RabbitMQProducerService rabbitMQProducerService) {
 		this.redisTemplate = redisTemplate;
 		this.elasticsearchService = elasticsearchService;
+		this.rabbitMQProducerService = rabbitMQProducerService;
 		try (InputStream schemaStream = getClass().getResourceAsStream("/plan-schema.json")) {
 			if (schemaStream == null) {
 				throw new RuntimeException("Schema file not found");
@@ -89,8 +95,8 @@ class PlanController {
 			redisData.put("etag", etag);
 			redisTemplate.opsForValue().set(objectId, redisData.toString());
 			
-			// Index in Elasticsearch
-			elasticsearchService.indexPlan(jsonObject);
+			// Send message to RabbitMQ for async processing
+			rabbitMQProducerService.sendMessage(jsonObject);
 			
 			URI location = ServletUriComponentsBuilder.fromCurrentRequest()
 					.path("/{id}")
@@ -183,6 +189,9 @@ class PlanController {
 			redisData.put("metadata", metadata);
 			redisData.put("etag", newEtag);
 			redisTemplate.opsForValue().set(id, redisData.toString());
+			
+			// Send message to RabbitMQ for async processing
+			rabbitMQProducerService.sendMessage(newPlan);
 			
 			return ResponseEntity.ok()
 					.eTag(newEtag)
@@ -347,8 +356,11 @@ class PlanController {
 						.body(new ErrorResponse("Plan not found", "NOT_FOUND"));
 			}
 			
-			// Delete from Elasticsearch
-			elasticsearchService.deletePlan(id);
+			// Send delete message to RabbitMQ
+			JSONObject deleteMessage = new JSONObject();
+			deleteMessage.put("operation", "delete");
+			deleteMessage.put("objectId", id);
+			rabbitMQProducerService.sendMessage(deleteMessage);
 			
 			return ResponseEntity.noContent().build();
 		} catch (Exception e) {
