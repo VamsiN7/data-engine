@@ -4,9 +4,11 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.elasticsearch.annotations.Document;
 import org.springframework.data.elasticsearch.annotations.Field;
 import org.springframework.data.elasticsearch.annotations.FieldType;
+import org.springframework.data.elasticsearch.annotations.JoinTypeRelation;
+import org.springframework.data.elasticsearch.annotations.JoinTypeRelations;
+import org.springframework.data.elasticsearch.core.join.JoinField;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Map;
 
 @Document(indexName = "plans")
@@ -14,6 +16,12 @@ public class PlanDocument {
 
     @Id
     private String objectId;
+
+    @Field(type = FieldType.Object, name = "plan_service_relation")
+    @JoinTypeRelations(relations = {
+        @JoinTypeRelation(parent = "plan", children = {"service"})
+    })
+    private JoinField<String> planRelation = new JoinField<>("plan");
 
     @Field(type = FieldType.Text)
     private String objectType;
@@ -30,9 +38,6 @@ public class PlanDocument {
     @Field(type = FieldType.Object)
     private Map<String, Object> planCostShares;
 
-    @Field(type = FieldType.Nested)
-    private List<Map<String, Object>> linkedPlanServices;
-
     // Getters and Setters
     public String getObjectId() {
         return objectId;
@@ -40,6 +45,14 @@ public class PlanDocument {
 
     public void setObjectId(String objectId) {
         this.objectId = objectId;
+    }
+
+    public JoinField<String> getPlanRelation() {
+        return planRelation;
+    }
+
+    public void setPlanRelation(JoinField<String> planRelation) {
+        this.planRelation = planRelation;
     }
 
     public String getObjectType() {
@@ -80,13 +93,5 @@ public class PlanDocument {
 
     public void setPlanCostShares(Map<String, Object> planCostShares) {
         this.planCostShares = planCostShares;
-    }
-
-    public List<Map<String, Object>> getLinkedPlanServices() {
-        return linkedPlanServices;
-    }
-
-    public void setLinkedPlanServices(List<Map<String, Object>> linkedPlanServices) {
-        this.linkedPlanServices = linkedPlanServices;
     }
 }

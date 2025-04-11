@@ -1,5 +1,3 @@
-I'll explain how this system works in detail, breaking down its components and flow.
-
 # System Architecture and Workflow
 
 ## 1. Core Components
