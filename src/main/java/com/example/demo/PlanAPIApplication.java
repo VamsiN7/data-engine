@@ -330,6 +330,9 @@ class PlanController {
 			redisData.put("metadata", metadata);
 			redisData.put("etag", newEtag);
 			redisTemplate.opsForValue().set(id, redisData.toString());
+
+			// Send message to RabbitMQ for async processing
+			rabbitMQProducerService.sendMessage(patch);
 			
 			return ResponseEntity.ok()
 					.eTag(newEtag)
