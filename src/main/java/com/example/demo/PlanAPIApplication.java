@@ -75,38 +75,38 @@ class PlanController {
 		try {
 			JSONObject jsonObject = new JSONObject(planJson);
 			planSchema.validate(jsonObject);
-			
+
 			String objectId = jsonObject.getString("objectId");
 			String etag = DigestUtils.md5DigestAsHex(planJson.getBytes());
-			
+
 			// Create metadata
 			Map<String, Object> metadata = new HashMap<>();
 			metadata.put("created_by", authentication.getName());
 			metadata.put("created_at", LocalDateTime.now().toString());
 			metadata.put("updated_at", LocalDateTime.now().toString());
-			
+
 			// Create response
 			DataResponse response = new DataResponse(jsonObject.toMap());
-			
+
 			// Store in Redis with metadata
 			JSONObject redisData = new JSONObject();
 			redisData.put("data", jsonObject);
 			redisData.put("metadata", metadata);
 			redisData.put("etag", etag);
 			redisTemplate.opsForValue().set(objectId, redisData.toString());
-			
+
 			// Send message to RabbitMQ for async processing
 			rabbitMQProducerService.sendMessage(jsonObject);
-			
+
 			URI location = ServletUriComponentsBuilder.fromCurrentRequest()
 					.path("/{id}")
 					.buildAndExpand(objectId)
 					.toUri();
-			
+
 			return ResponseEntity.created(location)
 					.eTag(etag)
 					.body(response);
-					
+
 		} catch (ValidationException ve) {
 			return ResponseEntity.badRequest()
 					.body(new ErrorResponse(ve.getAllMessages().toString(), "VALIDATION_ERROR"));
@@ -127,21 +127,21 @@ class PlanController {
 				return ResponseEntity.status(HttpStatus.NOT_FOUND)
 						.body(new ErrorResponse("Plan not found", "NOT_FOUND"));
 			}
-			
+
 			JSONObject jsonObject = new JSONObject(planJson);
 			String etag = jsonObject.getString("etag");
-			
+
 			if (etag.equals(ifNoneMatch)) {
 				return ResponseEntity.status(HttpStatus.NOT_MODIFIED)
 						.eTag(etag)
 						.build();
 			}
-			
+
 			// Return only the data portion
 			return ResponseEntity.ok()
 					.eTag(etag)
 					.body(jsonObject.getJSONObject("data").toString());
-					
+
 		} catch (Exception e) {
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
 					.body(new ErrorResponse("Failed to retrieve plan", "INTERNAL_ERROR"));
@@ -161,42 +161,42 @@ class PlanController {
 				return ResponseEntity.status(HttpStatus.NOT_FOUND)
 						.body(new ErrorResponse("Plan not found", "NOT_FOUND"));
 			}
-			
+
 			JSONObject existing = new JSONObject(existingJson);
 			String existingEtag = existing.getString("etag");
-			
+
 			if (ifMatch != null && !existingEtag.equals(ifMatch)) {
 				return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED)
 						.body(new ErrorResponse("Precondition failed", "PRECONDITION_FAILED"));
 			}
-			
+
 			JSONObject newPlan = new JSONObject(planJson);
 			planSchema.validate(newPlan);
-			
+
 			String newEtag = DigestUtils.md5DigestAsHex(planJson.getBytes());
-			
+
 			// Update metadata
 			Map<String, Object> metadata = existing.getJSONObject("metadata").toMap();
 			metadata.put("updated_by", authentication.getName());
 			metadata.put("updated_at", LocalDateTime.now().toString());
-			
+
 			// Create response
 			DataResponse response = new DataResponse(newPlan.toMap());
-			
+
 			// Store in Redis with metadata
 			JSONObject redisData = new JSONObject();
 			redisData.put("data", newPlan);
 			redisData.put("metadata", metadata);
 			redisData.put("etag", newEtag);
 			redisTemplate.opsForValue().set(id, redisData.toString());
-			
+
 			// Send message to RabbitMQ for async processing
 			rabbitMQProducerService.sendMessage(newPlan);
-			
+
 			return ResponseEntity.ok()
 					.eTag(newEtag)
 					.body(response);
-					
+
 		} catch (ValidationException ve) {
 			return ResponseEntity.badRequest()
 					.body(new ErrorResponse(ve.getAllMessages().toString(), "VALIDATION_ERROR"));
@@ -209,17 +209,16 @@ class PlanController {
 	// Helper method to deep merge objects
 	private Map<String, Object> deepMerge(Map<String, Object> existing, Map<String, Object> patch) {
 		Map<String, Object> result = new HashMap<>(existing);
-		
+
 		for (Map.Entry<String, Object> entry : patch.entrySet()) {
 			String key = entry.getKey();
 			Object patchValue = entry.getValue();
-			
+
 			if (patchValue instanceof Map && result.containsKey(key) && result.get(key) instanceof Map) {
 				// Recursively merge nested objects
 				result.put(key, deepMerge(
-					(Map<String, Object>) result.get(key),
-					(Map<String, Object>) patchValue
-				));
+						(Map<String, Object>) result.get(key),
+						(Map<String, Object>) patchValue));
 			} else if (patchValue instanceof List && result.containsKey(key) && result.get(key) instanceof List) {
 				// Handle arrays with special merge logic
 				result.put(key, mergeArrays((List<Object>) result.get(key), (List<Object>) patchValue));
@@ -228,25 +227,25 @@ class PlanController {
 				result.put(key, patchValue);
 			}
 		}
-		
+
 		return result;
 	}
 
 	// Helper method to merge arrays with specific rules
 	private List<Object> mergeArrays(List<Object> existing, List<Object> patch) {
 		List<Object> result = new ArrayList<>(existing);
-		
+
 		for (Object patchItem : patch) {
 			if (patchItem instanceof Map) {
 				Map<String, Object> patchMap = (Map<String, Object>) patchItem;
 				String objectId = (String) patchMap.get("objectId");
-				
+
 				if (objectId == null) {
 					// If no objectId, append as new item
 					result.add(patchItem);
 					continue;
 				}
-				
+
 				// Find existing item with matching objectId
 				boolean found = false;
 				for (int i = 0; i < result.size(); i++) {
@@ -254,7 +253,7 @@ class PlanController {
 					if (existingItem instanceof Map) {
 						Map<String, Object> existingMap = (Map<String, Object>) existingItem;
 						String existingId = (String) existingMap.get("objectId");
-						
+
 						if (objectId.equals(existingId)) {
 							// If found and different, replace with new item
 							if (!existingItem.equals(patchItem)) {
@@ -265,7 +264,7 @@ class PlanController {
 						}
 					}
 				}
-				
+
 				// If not found, append as new item
 				if (!found) {
 					result.add(patchItem);
@@ -277,7 +276,7 @@ class PlanController {
 				}
 			}
 		}
-		
+
 		return result;
 	}
 
@@ -286,6 +285,7 @@ class PlanController {
 	public ResponseEntity<?> patchPlan(
 			@PathVariable("id") String id,
 			@RequestBody String planJson,
+			@RequestHeader(value = "If-Match", required = false) String ifMatch,
 			Authentication authentication) {
 		try {
 			String existingJson = redisTemplate.opsForValue().get(id);
@@ -293,10 +293,18 @@ class PlanController {
 				return ResponseEntity.status(HttpStatus.NOT_FOUND)
 						.body(new ErrorResponse("Plan not found", "NOT_FOUND"));
 			}
-			
+
 			JSONObject existing = new JSONObject(existingJson);
+			String existingEtag = existing.getString("etag");
+
+			// Check If-Match header
+			if (ifMatch == null && !existingEtag.equals(ifMatch)) {
+				return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED)
+						.body(new ErrorResponse("Precondition failed", "PRECONDITION_FAILED"));
+			}
+
 			JSONObject patch = new JSONObject(planJson);
-			
+
 			// Handle both direct plan data and full response format
 			JSONObject patchData;
 			if (patch.has("data")) {
@@ -304,26 +312,25 @@ class PlanController {
 			} else {
 				patchData = patch;
 			}
-			
+
 			// Deep merge the data
 			Map<String, Object> mergedData = deepMerge(
-				existing.getJSONObject("data").toMap(),
-				patchData.toMap()
-			);
-			
+					existing.getJSONObject("data").toMap(),
+					patchData.toMap());
+
 			// Validate the merged data against the schema
 			planSchema.validate(new JSONObject(mergedData));
-			
+
 			// Update metadata
 			Map<String, Object> metadata = existing.getJSONObject("metadata").toMap();
 			metadata.put("updated_by", authentication.getName());
 			metadata.put("updated_at", LocalDateTime.now().toString());
-			
+
 			String newEtag = DigestUtils.md5DigestAsHex(new JSONObject(mergedData).toString().getBytes());
-			
+
 			// Create response
 			DataResponse response = new DataResponse(mergedData);
-			
+
 			// Store in Redis with metadata
 			JSONObject redisData = new JSONObject();
 			redisData.put("data", new JSONObject(mergedData));
@@ -332,12 +339,15 @@ class PlanController {
 			redisTemplate.opsForValue().set(id, redisData.toString());
 
 			// Send message to RabbitMQ for async processing
-			rabbitMQProducerService.sendMessage(patch);
-			
+			// rabbitMQProducerService.sendMessage(patch);
+			// Send message to RabbitMQ for async processing
+			JSONObject updatedPlan = new JSONObject(mergedData);
+			rabbitMQProducerService.sendMessage(updatedPlan);
+
 			return ResponseEntity.ok()
 					.eTag(newEtag)
 					.body(response);
-					
+
 		} catch (ValidationException ve) {
 			return ResponseEntity.badRequest()
 					.body(new ErrorResponse(ve.getAllMessages().toString(), "VALIDATION_ERROR"));
@@ -358,13 +368,13 @@ class PlanController {
 				return ResponseEntity.status(HttpStatus.NOT_FOUND)
 						.body(new ErrorResponse("Plan not found", "NOT_FOUND"));
 			}
-			
+
 			// Send delete message to RabbitMQ
 			JSONObject deleteMessage = new JSONObject();
 			deleteMessage.put("operation", "delete");
 			deleteMessage.put("objectId", id);
 			rabbitMQProducerService.sendMessage(deleteMessage);
-			
+
 			return ResponseEntity.noContent().build();
 		} catch (Exception e) {
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -379,7 +389,7 @@ class PlanController {
 			@RequestParam(required = false) String serviceId) {
 		try {
 			List<PlanDocument> results;
-			
+
 			if (org != null) {
 				results = elasticsearchService.searchByOrganization(org);
 			} else if (planType != null) {
@@ -390,7 +400,7 @@ class PlanController {
 				return ResponseEntity.badRequest()
 						.body(new ErrorResponse("At least one search parameter is required", "INVALID_SEARCH"));
 			}
-			
+
 			return ResponseEntity.ok(results);
 		} catch (Exception e) {
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
