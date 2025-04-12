@@ -298,7 +298,7 @@ class PlanController {
 			String existingEtag = existing.getString("etag");
 
 			// Check If-Match header
-			if (ifMatch == null && !existingEtag.equals(ifMatch)) {
+			if (!existingEtag.equals(ifMatch)) {
 				return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED)
 						.body(new ErrorResponse("Precondition failed", "PRECONDITION_FAILED"));
 			}
