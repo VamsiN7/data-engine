@@ -19,7 +19,7 @@ public class PlanDocument {
 
     @Field(type = FieldType.Object, name = "plan_service_relation")
     @JoinTypeRelations(relations = {
-        @JoinTypeRelation(parent = "plan", children = {"service"})
+        @JoinTypeRelation(parent = "plan", children = {"service", "plancostShare", "serviceCostShare", "linkedService"})
     })
     private JoinField<String> planRelation = new JoinField<>("plan");
 
@@ -34,9 +34,6 @@ public class PlanDocument {
 
     @Field(type = FieldType.Date, format = {}, pattern = "yyyy-MM-dd")
     private LocalDate creationDate;
-
-    @Field(type = FieldType.Object)
-    private Map<String, Object> planCostShares;
 
     // Getters and Setters
     public String getObjectId() {
@@ -85,13 +82,5 @@ public class PlanDocument {
 
     public void setCreationDate(LocalDate creationDate) {
         this.creationDate = creationDate;
-    }
-
-    public Map<String, Object> getPlanCostShares() {
-        return planCostShares;
-    }
-
-    public void setPlanCostShares(Map<String, Object> planCostShares) {
-        this.planCostShares = planCostShares;
     }
 }

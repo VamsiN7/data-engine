@@ -35,7 +35,7 @@ public class ElasticsearchIndexConfig {
 
         // Create index with explicit join mapping using a Map for relations
         Map<String, List<String>> relations = new HashMap<>();
-        relations.put("plan", List.of("service"));
+        relations.put("plan", List.of("service", "plancostShare", "serviceCostShare", "linkedService"));
 
         // Create index with the join field mapping
         elasticsearchClient.indices().create(c -> c
@@ -48,7 +48,10 @@ public class ElasticsearchIndexConfig {
                         .properties("objectType", p -> p.keyword(k -> k))
                         .properties("_org", p -> p.text(t -> t))
                         .properties("planType", p -> p.keyword(k -> k))
-                        .properties("creationDate", p -> p.date(d -> d.format("yyyy-MM-dd")))
-                        .properties("name", p -> p.text(t -> t))));
+                        .properties("deductible", p -> p.integer(i -> i))
+                        .properties("copay", p -> p.integer(i -> i))
+                        .properties("serviceId", p -> p.keyword(k -> k))
+                        .properties("name", p -> p.text(t -> t))
+                        .properties("creationDate", p -> p.date(d -> d.format("yyyy-MM-dd")))));
     }
 }

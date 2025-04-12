@@ -19,4 +19,7 @@ public interface PlanElasticsearchRepository extends ElasticsearchRepository<Pla
     // Parent-child queries
     @Query("{\"bool\":{\"must\":{\"has_child\":{\"type\":\"service\",\"query\":{\"term\":{\"objectId\":\"?0\"}}}}}}")
     List<PlanDocument> findPlansByServiceId(String serviceId);
+    
+    @Query("{\"bool\":{\"must\":{\"has_child\":{\"type\":\"plancostShare\",\"query\":{\"range\":{\"copay\":{\"gte\":\"?0\"}}}}}}}")
+    List<PlanDocument> findPlansByCostShareCopayGreaterThanEqual(Integer copay);
 }
