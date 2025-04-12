@@ -7,10 +7,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.everit.json.schema.Schema;
 import org.everit.json.schema.ValidationException;
 import org.everit.json.schema.loader.SchemaLoader;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -360,25 +362,193 @@ class PlanController {
 	}
 
 	// DELETE /api/v1/plans/{id} - Delete a plan
+	// @DeleteMapping("/{id}")
+	// public ResponseEntity<?> deletePlan(@PathVariable("id") String id) {
+	// try {
+	// Boolean deleted = redisTemplate.delete(id);
+	// if (deleted == null || !deleted) {
+	// return ResponseEntity.status(HttpStatus.NOT_FOUND)
+	// .body(new ErrorResponse("Plan not found", "NOT_FOUND"));
+	// }
+
+	// // Send delete message to RabbitMQ
+	// JSONObject deleteMessage = new JSONObject();
+	// deleteMessage.put("operation", "delete");
+	// deleteMessage.put("objectId", id);
+	// rabbitMQProducerService.sendMessage(deleteMessage);
+
+	// return ResponseEntity.noContent().build();
+	// } catch (Exception e) {
+	// return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+	// .body(new ErrorResponse("Failed to delete plan", "INTERNAL_ERROR"));
+	// }
+	// }
 	@DeleteMapping("/{id}")
 	public ResponseEntity<?> deletePlan(@PathVariable("id") String id) {
 		try {
-			Boolean deleted = redisTemplate.delete(id);
-			if (deleted == null || !deleted) {
-				return ResponseEntity.status(HttpStatus.NOT_FOUND)
-						.body(new ErrorResponse("Plan not found", "NOT_FOUND"));
+			// Check if this is a direct plan ID
+			Boolean planExists = redisTemplate.hasKey(id);
+			if (planExists != null && planExists) {
+				// This is a top-level plan ID - delete it directly
+				redisTemplate.delete(id);
+
+				// Send delete message to RabbitMQ
+				JSONObject deleteMessage = new JSONObject();
+				deleteMessage.put("operation", "delete");
+				deleteMessage.put("objectId", id);
+				rabbitMQProducerService.sendMessage(deleteMessage);
+
+				return ResponseEntity.noContent().build();
+			} else {
+				// This might be a child object ID - search for it in all plans
+				boolean childFound = false;
+
+				// Get all keys (could be optimized with pattern matching if Redis supports it)
+				Set<String> keys = redisTemplate.keys("*");
+				for (String planKey : keys) {
+					String planJson = redisTemplate.opsForValue().get(planKey);
+					if (planJson == null)
+						continue;
+
+					JSONObject existing = new JSONObject(planJson);
+					JSONObject planData = existing.getJSONObject("data");
+
+					// Check if this plan contains the child ID
+					if (containsChildWithId(planData, id)) {
+						// Remove the child with that ID
+						removeChildWithId(planData, id);
+
+						// Update plan metadata
+						String username = "system"; // or get from authentication if available
+						Map<String, Object> metadata = existing.getJSONObject("metadata").toMap();
+						metadata.put("updated_by", username);
+						metadata.put("updated_at", LocalDateTime.now().toString());
+
+						// Calculate new ETag
+						String newEtag = DigestUtils.md5DigestAsHex(planData.toString().getBytes());
+
+						// Store updated plan
+						JSONObject redisData = new JSONObject();
+						redisData.put("data", planData);
+						redisData.put("metadata", metadata);
+						redisData.put("etag", newEtag);
+						redisTemplate.opsForValue().set(planKey, redisData.toString());
+
+						// Send message to RabbitMQ for async processing
+						rabbitMQProducerService.sendMessage(planData);
+
+						childFound = true;
+						break;
+					}
+				}
+
+				if (childFound) {
+					return ResponseEntity.noContent().build();
+				} else {
+					return ResponseEntity.status(HttpStatus.NOT_FOUND)
+							.body(new ErrorResponse("Object not found", "NOT_FOUND"));
+				}
 			}
-
-			// Send delete message to RabbitMQ
-			JSONObject deleteMessage = new JSONObject();
-			deleteMessage.put("operation", "delete");
-			deleteMessage.put("objectId", id);
-			rabbitMQProducerService.sendMessage(deleteMessage);
-
-			return ResponseEntity.noContent().build();
 		} catch (Exception e) {
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-					.body(new ErrorResponse("Failed to delete plan", "INTERNAL_ERROR"));
+					.body(new ErrorResponse("Failed to delete object: " + e.getMessage(), "INTERNAL_ERROR"));
+		}
+	}
+
+	// Helper method to check if a plan contains a child with the given ID
+	private boolean containsChildWithId(JSONObject planData, String childId) {
+		// Check planCostShares
+		if (planData.has("planCostShares")) {
+			JSONObject costShares = planData.getJSONObject("planCostShares");
+			if (childId.equals(costShares.optString("objectId"))) {
+				return true;
+			}
+		}
+
+		// Check linkedPlanServices
+		if (planData.has("linkedPlanServices")) {
+			JSONArray services = planData.getJSONArray("linkedPlanServices");
+			for (int i = 0; i < services.length(); i++) {
+				JSONObject service = services.getJSONObject(i);
+
+				// Check service itself
+				if (childId.equals(service.optString("objectId"))) {
+					return true;
+				}
+
+				// Check linkedService
+				if (service.has("linkedService")) {
+					JSONObject linkedService = service.getJSONObject("linkedService");
+					if (childId.equals(linkedService.optString("objectId"))) {
+						return true;
+					}
+				}
+
+				// Check planserviceCostShares
+				if (service.has("planserviceCostShares")) {
+					JSONObject serviceCostShares = service.getJSONObject("planserviceCostShares");
+					if (childId.equals(serviceCostShares.optString("objectId"))) {
+						return true;
+					}
+				}
+			}
+		}
+
+		return false;
+	}
+
+	// Helper method to remove a child with the given ID
+	private void removeChildWithId(JSONObject planData, String childId) {
+		// We can't remove planCostShares (required field), so we'd just update it
+		if (planData.has("planCostShares")) {
+			JSONObject costShares = planData.getJSONObject("planCostShares");
+			if (childId.equals(costShares.optString("objectId"))) {
+				// We could reset values but keep the object
+				costShares.put("deductible", 0);
+				costShares.put("copay", 0);
+				return;
+			}
+		}
+
+		// Check linkedPlanServices
+		if (planData.has("linkedPlanServices")) {
+			JSONArray services = planData.getJSONArray("linkedPlanServices");
+			JSONArray updatedServices = new JSONArray();
+
+			for (int i = 0; i < services.length(); i++) {
+				JSONObject service = services.getJSONObject(i);
+
+				// Skip if this is the service to remove
+				if (childId.equals(service.optString("objectId"))) {
+					continue;
+				}
+
+				// Check if we need to modify the service's children
+				boolean addService = true;
+
+				if (service.has("linkedService")) {
+					JSONObject linkedService = service.getJSONObject("linkedService");
+					if (childId.equals(linkedService.optString("objectId"))) {
+						// If linkedService is the target, remove the whole service
+						addService = false;
+					}
+				}
+
+				if (service.has("planserviceCostShares")) {
+					JSONObject serviceCostShares = service.getJSONObject("planserviceCostShares");
+					if (childId.equals(serviceCostShares.optString("objectId"))) {
+						// If planserviceCostShares is the target, remove the whole service
+						addService = false;
+					}
+				}
+
+				if (addService) {
+					updatedServices.put(service);
+				}
+			}
+
+			// Replace the services array
+			planData.put("linkedPlanServices", updatedServices);
 		}
 	}
 
